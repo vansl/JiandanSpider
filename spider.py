@@ -4,7 +4,7 @@ from bs4 import BeautifulSoup
 import requests
 import re
 import random
-
+import shutil
 def parse (imgHash, constant): 
     q = 4
     hashlib.md5()   
@@ -91,9 +91,9 @@ def spider():
 
     indexList=[]
     for i in range(5):
-        index=int(random.random()*30)
+        index=int(random.random()*len(hashList))
         while index in indexList:
-            index=int(random.random()*30)
+            index=int(random.random()*len(hashList))
         indexList.append(index)
 
     for index in indexList:
