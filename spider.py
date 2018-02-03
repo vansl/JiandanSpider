@@ -5,7 +5,15 @@ import requests
 import re
 import random
 import shutil
-def parse (imgHash, constant): 
+import os
+import time
+import queue
+import threading
+
+'''
+url解码
+'''
+def parse(imgHash, constant): 
     q = 4
     hashlib.md5()   
     constant = md5(constant)
@@ -55,59 +63,146 @@ def decode_base64(data):
     return base64.b64decode(data)
 
 headers={
-    'Accept':'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-    'Accept-Encoding':'gzip, deflate',
-    'Accept-Language':'zh-CN,zh;q=0.9',
-    'Cache-Control':'max-age=0',
-    'Connection':'keep-alive',
-    'Host':'jandan.net',
-    'Referer':'http://jandan.net/',
-    'Upgrade-Insecure-Requests':'1',
     'User-Agent':'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/62.0.3202.94 Safari/537.36'
 }
 
-def getConstantAndHash():
-    page=BeautifulSoup(requests.get('http://jandan.net/ooxx',headers=headers).text,"lxml")
-    preUrl='http:'+page.select('.previous-comment-page')[0]['href']
-    html=requests.get(preUrl,headers=headers).text
+'''
+页面抓取类
+'''
+class Spider(threading.Thread):  
+
+    def __init__(self,url_List,proxies,urlMannager):  
+        threading.Thread.__init__(self)  
+        self.url_List=url_List
+        self.proxies=proxies
+        self.urlMannager=urlMannager 
+
+    def get_Page(self,page_Url,proxies,urlMannager):
+        html=requests.get(page_Url,headers=headers,proxies=proxies,timeout=3).text
+        page=BeautifulSoup(html,"lxml")
+
+        '''
+        获取js文件地址从而得到constant常量
+        '''
+        try:
+            model=re.findall(r'.*<script\ssrc=\"\/\/(cdn.jandan.net\/static\/min.*?)\"><\/script>.*',html)
+            jsFileUrl="http://"+model[len(model)-1]     #页面上可能有两个地址，取最后一个匹配的地址
+        except Exception as e:
+            print(e)
+        jsFile=requests.get(jsFileUrl,headers=headers,proxies=proxies,timeout=3).text
+
+        constant=re.search(r'.*f_\w+\(e,\"(\w+)\".*',jsFile).group(1)
     
-    j=re.search(r'.*<script\ssrc=\"\/\/(cdn.jandan.net\/static\/min.*?)\"><\/script>.*',html)
-    jsFileUrl="http://"+j.group(1)
-    jsFile=requests.get(jsFileUrl,headers=headers).text
+        '''
+        向parse函数传入constant常量和img-hash得到图片地址
+        '''
+        for item in page.select('.img-hash'):
+            imgUrl='http:'+parse(item.text,constant)
+            urlMannager.addNewUrl(imgUrl)
 
-    c=re.search(r'.*f_\w+\(e,\"(\w+)\".*',jsFile)
-    constant=c.group(1)
+    def run(self):
+        for url in self.url_List:
+            self.get_Page(url,self.proxies,self.urlMannager)
 
-    prePage=BeautifulSoup(html,"lxml")
-    resultList=[]
-    for item in prePage.select('.img-hash'):
-        resultList.append(item.text)
-    return constant,resultList
+'''
+程序入口
+'''
+def main(amount,firstIndex):
+    urlMannager=UrlMannager()
+    proxies={'http':''}             #尚未添加ip代理功能，程序已能正常运行
 
-def spider():
-    result=getConstantAndHash()
-    constant=result[0]
-    hashList=result[1]
+    '''
+    多线程抓取页面地址
+    '''
+    page_Url=[]            #待抓取页面
+    for i in range(amount):
+        page_Url.append('http://jandan.net/ooxx/page-'+str(firstIndex-i))
+    page_threads = []  
+    t_amount=10 if len(page_Url)>10 else len(page_Url)  #页面抓取线程数
+    for i in range(t_amount):  
+        t = Spider(page_Url[int((len(page_Url))/t_amount)*i:int((len(page_Url))/t_amount)*(i+1)],proxies,urlMannager)
+        page_threads.append(t)  
+    for t in page_threads:  
+        t.start()
+    for t in page_threads:  
+        t.join()
 
-    indexList=[]
-    for i in range(5):
-        index=int(random.random()*len(hashList))
-        while index in indexList:
-            index=int(random.random()*len(hashList))
-        indexList.append(index)
+    img_threads = []  
+    for i in range(10):             #固定10个线程用于下载图片
+        t = Download(urlMannager)
+        img_threads.append(t)  
+    for t in img_threads:  
+        t.start()
+    for t in img_threads:  
+        t.join()
 
-    for index in indexList:
-        imgHash=hashList[index]
-        url='http:'+parse(imgHash,constant)
-        replace=re.match(r'(.*\.sinaimg\.cn\/)(\w+)(\/.+\.gif)',url)
-        if replace:
-            url=replace.group(1)+'large'+replace.group(3)
-        e=re.match(r'.*(\.\w+)',url)
-        extensionName=e.group(1)
-        with open (str(index)+extensionName, 'wb') as f:
-            headers['host']='wx3.sinaimg.cn'
+L = threading.Lock()
+
+'''
+图片下载类
+'''
+class Download(threading.Thread):  
+    def __init__(self, urlMannager):  
+        threading.Thread.__init__(self)  
+        self.urlMannager=urlMannager 
+
+    def download_Img(self,url):
+        isGif=re.match(r'(.*\.sinaimg\.cn\/)(\w+)(\/.+\.gif)',url)
+        if isGif:
+            url=isGif.group(1)+'large'+isGif.group(3)
+
+        extensionName=re.match(r'.*(\.\w+)',url).group(1)       #图片扩展名
+
+        L.acquire()
+        if not os.path.exists('img'):
+            os.mkdir('img')
+        with open ('img/'+str(len(os.listdir('./img')))+extensionName, 'wb') as f:
+            headers['Host']='wx3.sinaimg.cn'
             f.write(requests.get(url,headers=headers).content)
             f.close()
+        L.release()
+        
+    def run(self):  
+        while not self.urlMannager.isEmpty():
+            imgUrl=self.urlMannager.getNewUrl()
+            self.download_Img(imgUrl)
+            self.urlMannager.addOldUrl(imgUrl)
+
+'''
+url仓库，提供url更新以及记录功能
+'''
+class UrlMannager:
+    def __init__(self):
+        self.url_used=[]
+        self.url_target=queue.Queue()
+        if os.path.exists('url.txt'):
+            with open('url.txt','r') as f:
+                for eachline in f.readlines():
+                    self.url_used.append(eachline.strip())
+        else:
+            open("url.txt",'w')
+
+    def getNewUrl(self):
+        return self.url_target.get()
+
+    def isEmpty(self):
+        return self.url_target.empty()
+
+    def addNewUrl(self,newUrl):
+        if newUrl in self.url_used:
+            pass
+        else:
+            self.url_target.put(newUrl)
+
+    def addOldUrl(self,oldUrl):
+        self.url_used.append(oldUrl)
+        with open('url.txt','a') as f:
+            f.write(oldUrl+'\n')
 
 if __name__=='__main__':
-    spider()
+
+    firstPage=requests.get('http://jandan.net/ooxx',headers=headers).text
+    firstIndex=int(re.search(r'.*current.*\">\[(.*?)\].*',firstPage)[1])  #首页页码
+    
+    amount=input('请输入抓取页数后按回车开始(小于'+str(firstIndex)+'，从首页开始计数):')
+    main(int(amount),firstIndex)                   #抓取首页开始的前amount页的图片
