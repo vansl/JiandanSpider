@@ -144,7 +144,9 @@ L = threading.Lock()
 class Download(threading.Thread):  
     def __init__(self, urlMannager):  
         threading.Thread.__init__(self)  
-        self.urlMannager=urlMannager 
+        self.urlMannager=urlMannager
+        self.pic_headers = headers
+        self.pic_headers['Host'] = 'wx3.sinaimg.cn'
 
     def download_Img(self,url):
         isGif=re.match(r'(.*\.sinaimg\.cn\/)(\w+)(\/.+\.gif)',url)
@@ -157,8 +159,8 @@ class Download(threading.Thread):
         if not os.path.exists('img'):
             os.mkdir('img')
         with open ('img/'+str(len(os.listdir('./img')))+extensionName, 'wb') as f:
-            headers['Host']='wx3.sinaimg.cn'
-            f.write(requests.get(url,headers=headers).content)
+            # headers['Host']='wx3.sinaimg.cn'
+            f.write(requests.get(url,headers=self.pic_headers).content)
             f.close()
         L.release()
         
