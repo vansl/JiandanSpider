@@ -98,7 +98,7 @@ class Spider(threading.Thread):
             print(e)
         jsfile=requests.get(jsfile_url,headers=headers,proxies=proxies,timeout=3).text
 
-        constant=re.search(r'.*jdlt\w+\(e,\"(\w+)\".*',jsfile).group(1)
+        constant=re.search(r'.*remove\(\);var\sc=\w+\(e,\"(\w+)\".*',jsfile).group(1)
         '''
         向parse函数传入constant常量和img-hash得到图片地址
         '''
